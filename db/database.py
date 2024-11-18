@@ -27,9 +27,10 @@ class Database:
             raise
 
     def create_tables(self):
+        """Create database tables with proper error handling and order"""
         try:
             with self.conn.cursor() as cur:
-                # Create harvested_data table with session management
+                # Create base harvested_data table
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS harvested_data (
                         id SERIAL PRIMARY KEY,
@@ -38,14 +39,27 @@ class Database:
                         raw_content TEXT,
                         analysis JSONB,
                         processing_metadata JSONB,
-                        session_id VARCHAR(64),
-                        is_temporary BOOLEAN DEFAULT TRUE,
-                        last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
 
-                # Create harvested_media table
+                # Add session management columns to harvested_data
+                cur.execute("""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='harvested_data' AND column_name='session_id'
+                        ) THEN
+                            ALTER TABLE harvested_data 
+                            ADD COLUMN session_id VARCHAR(64),
+                            ADD COLUMN is_temporary BOOLEAN DEFAULT TRUE,
+                            ADD COLUMN last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                    END $$;
+                """)
+
+                # Create base harvested_media table
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS harvested_media (
                         id SERIAL PRIMARY KEY,
@@ -53,10 +67,23 @@ class Database:
                         media_type VARCHAR(10) NOT NULL,
                         url TEXT NOT NULL,
                         metadata JSONB,
-                        session_id VARCHAR(64),
-                        is_temporary BOOLEAN DEFAULT TRUE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
+                """)
+
+                # Add session management columns to harvested_media
+                cur.execute("""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='harvested_media' AND column_name='session_id'
+                        ) THEN
+                            ALTER TABLE harvested_media 
+                            ADD COLUMN session_id VARCHAR(64),
+                            ADD COLUMN is_temporary BOOLEAN DEFAULT TRUE;
+                        END IF;
+                    END $$;
                 """)
 
                 # Create indexes for better performance
@@ -69,6 +96,7 @@ class Database:
                 logger.info("Database tables created successfully")
         except Exception as e:
             logger.error(f"Failed to create tables: {str(e)}")
+            self.conn.rollback()
             raise
 
     def save_data(self, url: str, content: str, raw_content: str, analysis: dict, processing_metadata: dict | None = None, session_id: str | None = None) -> int:
@@ -96,6 +124,7 @@ class Database:
                 return result[0] if result else None
         except Exception as e:
             logger.error(f"Failed to save data: {str(e)}")
+            self.conn.rollback()
             raise
 
     def save_media(self, harvested_data_id: int, media_type: str, url: str, metadata: dict, session_id: str | None = None) -> int:
@@ -116,6 +145,7 @@ class Database:
                 return result[0] if result else None
         except Exception as e:
             logger.error(f"Failed to save media: {str(e)}")
+            self.conn.rollback()
             raise
 
     def get_all_data(self, include_raw: bool = False, include_media: bool = True, session_id: str | None = None) -> list:
@@ -180,6 +210,7 @@ class Database:
                 logger.info(f"Marked data_id {data_id} as permanent")
         except Exception as e:
             logger.error(f"Failed to mark data as permanent: {str(e)}")
+            self.conn.rollback()
             raise
 
     def cleanup_temporary_data(self, max_age_hours: int = 24) -> None:
@@ -202,6 +233,7 @@ class Database:
                 logger.info(f"Cleaned up temporary data older than {max_age_hours} hours")
         except Exception as e:
             logger.error(f"Failed to clean up temporary data: {str(e)}")
+            self.conn.rollback()
             raise
 
     def update_processing_metadata(self, data_id: int, metadata: dict) -> None:
@@ -220,6 +252,7 @@ class Database:
                 logger.info(f"Updated processing metadata for data_id: {data_id}")
         except Exception as e:
             logger.error(f"Failed to update processing metadata: {str(e)}")
+            self.conn.rollback()
             raise
 
     def __del__(self):

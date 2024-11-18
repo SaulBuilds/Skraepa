@@ -137,7 +137,8 @@ def process_url_with_progress(url: str, progress_text=None, progress_bar=None, c
         return {"success": False, "error": str(e)}
 
 def main():
-    st.title("Data Harvesting & Analysis Platform")
+    st.markdown("<h1 style='font-weight: 900; font-size: 3.5em; margin-bottom: 0.2em;'>SKRAEPA</h1>", unsafe_allow_html=True)
+    st.markdown("<h2 style='font-weight: 400; color: #7792E3;'>Data Harvesting & Analysis Platform</h2>", unsafe_allow_html=True)
     
     # Sidebar
     st.sidebar.header("Control Panel")

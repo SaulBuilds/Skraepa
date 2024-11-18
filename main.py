@@ -142,7 +142,7 @@ def main():
     
     # Sidebar
     st.sidebar.header("Control Panel")
-    mode = st.sidebar.radio("Select Mode", ["Single URL", "Batch Processing", "Dashboard"])
+    mode = st.sidebar.radio("Select Mode", ["Single URL", "Batch Processing", "Settings", "Dashboard"])
     
     if mode == "Single URL":
         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -267,6 +267,74 @@ def main():
                         )
                     except Exception as e:
                         st.error(f"Failed to prepare download: {str(e)}")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    elif mode == "Settings":
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("### Scraper Configuration")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            max_depth = st.slider(
+                "Maximum Scraping Depth",
+                min_value=1,
+                max_value=5,
+                value=3,
+                help="Maximum depth for recursive scraping. Higher values will scrape more pages but take longer."
+            )
+            
+            max_pages = st.number_input(
+                "Maximum Pages per Domain",
+                min_value=1,
+                max_value=500,
+                value=100,
+                help="Maximum number of pages to scrape from a single domain."
+            )
+            
+            stay_within_domain = st.toggle(
+                "Stay Within Domain",
+                value=True,
+                help="When enabled, only scrape pages from the same domain as the starting URL."
+            )
+        
+        with col2:
+            timeout = st.slider(
+                "Request Timeout (seconds)",
+                min_value=5,
+                max_value=60,
+                value=30,
+                help="Maximum time to wait for a page to respond."
+            )
+            
+            max_concurrent = st.slider(
+                "Concurrent Requests",
+                min_value=1,
+                max_value=10,
+                value=5,
+                help="Maximum number of simultaneous page requests. Higher values may be faster but could overwhelm servers."
+            )
+            
+            crawl_strategy = st.selectbox(
+                "Crawling Strategy",
+                options=["breadth-first", "depth-first"],
+                help="Breadth-first explores all pages at the current depth before going deeper. Depth-first explores each path to its maximum depth before backtracking."
+            )
+        
+        # Save configuration
+        if st.button("Save Configuration"):
+            try:
+                scraper.max_depth = max_depth
+                scraper.max_pages_per_domain = max_pages
+                scraper.stay_within_domain = stay_within_domain
+                scraper.timeout = timeout
+                scraper.max_concurrent = max_concurrent
+                scraper.crawl_strategy = crawl_strategy
+                
+                st.success("Configuration saved successfully!")
+            except Exception as e:
+                st.error(f"Failed to save configuration: {str(e)}")
         
         st.markdown('</div>', unsafe_allow_html=True)
     

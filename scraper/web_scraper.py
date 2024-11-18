@@ -1,12 +1,14 @@
 import trafilatura
-from typing import List, Dict
+from typing import List, Dict, Set, Optional
 import asyncio
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 import logging
 import time
 from requests.exceptions import RequestException, Timeout, ConnectionError, TooManyRedirects
 import aiohttp
 import async_timeout
+from bs4 import BeautifulSoup
+from collections import deque
 
 # Configure logging
 logging.basicConfig(
@@ -16,13 +18,35 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class WebScraper:
-    def __init__(self, max_retries: int = 3, retry_delay: float = 1.0, max_concurrent: int = 5):
+    def __init__(self, 
+                 max_retries: int = 3, 
+                 retry_delay: float = 1.0, 
+                 max_concurrent: int = 5,
+                 max_depth: int = 3,
+                 max_pages_per_domain: int = 100,
+                 stay_within_domain: bool = True,
+                 timeout: int = 30,
+                 crawl_strategy: str = "breadth-first"):
         self.results = []
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.max_concurrent = max_concurrent
+        self.max_depth = max_depth
+        self.max_pages_per_domain = max_pages_per_domain
+        self.stay_within_domain = stay_within_domain
+        self.timeout = timeout
+        self.crawl_strategy = crawl_strategy
         self.session = None
-        logger.info(f"WebScraper initialized with max_retries={max_retries}, retry_delay={retry_delay}, max_concurrent={max_concurrent}")
+        self.visited_urls: Set[str] = set()
+        self.progress_callback = None
+        logger.info(f"WebScraper initialized with settings: max_depth={max_depth}, "
+                   f"max_pages_per_domain={max_pages_per_domain}, "
+                   f"stay_within_domain={stay_within_domain}, "
+                   f"crawl_strategy={crawl_strategy}")
+
+    def set_progress_callback(self, callback):
+        """Set callback function for progress tracking"""
+        self.progress_callback = callback
 
     def validate_url(self, url: str) -> bool:
         """Validate URL format and accessibility"""
@@ -36,32 +60,70 @@ class WebScraper:
             logger.error(f"URL validation error for {url}: {str(e)}")
             return False
 
-    async def scrape_single_url(self, url: str) -> Dict:
+    def get_domain(self, url: str) -> str:
+        """Extract domain from URL"""
+        return urlparse(url).netloc
+
+    def should_process_url(self, url: str, base_domain: str) -> bool:
+        """Check if URL should be processed based on configuration"""
+        if not self.validate_url(url):
+            return False
+        if url in self.visited_urls:
+            return False
+        if len(self.visited_urls) >= self.max_pages_per_domain:
+            return False
+        if self.stay_within_domain and self.get_domain(url) != base_domain:
+            return False
+        return True
+
+    async def extract_links(self, html_content: str, base_url: str) -> List[str]:
+        """Extract and validate internal links from HTML content"""
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            links = []
+            base_domain = self.get_domain(base_url)
+
+            for anchor in soup.find_all('a', href=True):
+                href = anchor['href']
+                absolute_url = urljoin(base_url, href)
+                
+                if self.should_process_url(absolute_url, base_domain):
+                    links.append(absolute_url)
+
+            return links
+        except Exception as e:
+            logger.error(f"Error extracting links from {base_url}: {str(e)}")
+            return []
+
+    async def scrape_single_url(self, url: str, depth: int = 0) -> Dict:
         """Async method to scrape a single URL"""
         if not self.validate_url(url):
             return {"url": url, "success": False, "error": "Invalid URL format"}
         
         async with aiohttp.ClientSession() as session:
             self.session = session
-            return await self.fetch_url_content(url)
+            return await self.fetch_url_content(url, depth)
 
     def scrape_url(self, url: str) -> Dict:
         """Synchronous wrapper for scrape_single_url"""
         return asyncio.run(self.scrape_single_url(url))
 
-    async def fetch_url_content(self, url: str, retries: int = 0) -> Dict:
+    async def fetch_url_content(self, url: str, depth: int = 0, retries: int = 0) -> Dict:
         """Fetch URL content using aiohttp with retry mechanism"""
         if not self.validate_url(url):
             logger.error(f"Invalid URL format: {url}")
             return {"url": url, "success": False, "error": "Invalid URL format"}
 
+        if url in self.visited_urls:
+            return {"url": url, "success": False, "error": "URL already processed"}
+
         last_error = None
 
         while retries < self.max_retries:
             try:
-                logger.info(f"Attempting to fetch URL: {url} (Attempt {retries + 1}/{self.max_retries})")
+                logger.info(f"Attempting to fetch URL: {url} (Depth: {depth}, Attempt {retries + 1}/{self.max_retries})")
                 
-                async with async_timeout.timeout(30):  # 30 seconds timeout
+                async with async_timeout.timeout(self.timeout):
                     async with self.session.get(url) as response:
                         if response.status != 200:
                             raise aiohttp.ClientError(f"HTTP {response.status}")
@@ -74,11 +136,17 @@ class WebScraper:
                         if content is None:
                             raise ValueError("No content extracted")
 
+                        self.visited_urls.add(url)
                         logger.info(f"Successfully scraped URL: {url}")
+
+                        if self.progress_callback:
+                            await self.progress_callback(url, depth, len(self.visited_urls))
+
                         return {
                             "url": url,
                             "success": True,
-                            "content": content
+                            "content": content,
+                            "links": await self.extract_links(html_content, url)
                         }
 
             except asyncio.TimeoutError as e:
@@ -105,6 +173,42 @@ class WebScraper:
                     "success": False,
                     "error": f"Max retries reached: {last_error}"
                 }
+
+    async def recursive_scrape(self, start_url: str) -> List[Dict]:
+        """Recursively scrape URLs starting from a given URL"""
+        if not self.validate_url(start_url):
+            return [{"url": start_url, "success": False, "error": "Invalid URL format"}]
+
+        base_domain = self.get_domain(start_url)
+        results = []
+        
+        if self.crawl_strategy == "breadth-first":
+            queue = deque([(start_url, 0)])  # (url, depth)
+        else:  # depth-first
+            queue = [(start_url, 0)]  # Stack for DFS
+
+        async with aiohttp.ClientSession() as session:
+            self.session = session
+            
+            while queue and len(self.visited_urls) < self.max_pages_per_domain:
+                current_url, depth = queue.popleft() if self.crawl_strategy == "breadth-first" else queue.pop()
+                
+                if not self.should_process_url(current_url, base_domain):
+                    continue
+
+                result = await self.fetch_url_content(current_url, depth)
+                results.append(result)
+
+                if result["success"] and depth < self.max_depth:
+                    links = result.get("links", [])
+                    for link in links:
+                        if self.should_process_url(link, base_domain):
+                            if self.crawl_strategy == "breadth-first":
+                                queue.append((link, depth + 1))
+                            else:
+                                queue.insert(0, (link, depth + 1))  # Add to start for DFS
+
+        return results
 
     async def scrape_batch(self, urls: List[str]) -> List[Dict]:
         """Scrape multiple URLs concurrently with enhanced error handling"""

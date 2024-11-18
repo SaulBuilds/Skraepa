@@ -36,6 +36,19 @@ class WebScraper:
             logger.error(f"URL validation error for {url}: {str(e)}")
             return False
 
+    async def scrape_single_url(self, url: str) -> Dict:
+        """Async method to scrape a single URL"""
+        if not self.validate_url(url):
+            return {"url": url, "success": False, "error": "Invalid URL format"}
+        
+        async with aiohttp.ClientSession() as session:
+            self.session = session
+            return await self.fetch_url_content(url)
+
+    def scrape_url(self, url: str) -> Dict:
+        """Synchronous wrapper for scrape_single_url"""
+        return asyncio.run(self.scrape_single_url(url))
+
     async def fetch_url_content(self, url: str, retries: int = 0) -> Dict:
         """Fetch URL content using aiohttp with retry mechanism"""
         if not self.validate_url(url):

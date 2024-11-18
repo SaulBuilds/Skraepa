@@ -1263,7 +1263,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11.2" },
-    { name = "async-timeout" },
+    { name = "async-timeout", specifier = ">=5.0.1" },
     { name = "openai", specifier = ">=1.54.4" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "plotly", specifier = ">=5.24.1" },

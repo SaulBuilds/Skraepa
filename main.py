@@ -15,6 +15,11 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Load custom CSS
+def load_css():
+    with open("styles/custom.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
 # Page configuration
 st.set_page_config(
     page_title="Data Harvesting Platform",
@@ -22,6 +27,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Load custom styling
+try:
+    load_css()
+except Exception as e:
+    logger.error(f"Failed to load custom CSS: {str(e)}")
+    st.warning("Custom styling could not be loaded.")
 
 # Initialize components with error handling
 try:
@@ -44,7 +56,10 @@ except Exception as e:
 
 try:
     db = Database()
-    logger.info("Database initialized successfully")
+    # Test database connection
+    with db.conn.cursor() as cur:
+        cur.execute("SELECT 1")
+    logger.info("Database initialized and connected successfully")
 except Exception as e:
     st.error(f"Failed to initialize Database: {str(e)}")
     st.stop()
@@ -58,7 +73,7 @@ def process_url_with_progress(url: str, progress_text=None, progress_bar=None, c
             progress_text.text("Step 1/4: Scraping content...")
         
         # Scrape content
-        result = scraper.scrape_single_url(url)
+        result = scraper.scrape_url(url)
         if not result["success"]:
             return {"success": False, "error": result.get("error", "Unknown error")}
         
@@ -161,7 +176,7 @@ def main():
                     # Download button for the analysis
                     export_dict = {
                         "url": url,
-                        "content": result["analysis"].get("raw_content", ""),
+                        "content": result["analysis"]["raw_content"],
                         "analysis": result["analysis"],
                         "metadata": {
                             "timestamp": datetime.utcnow().isoformat(),
@@ -283,8 +298,8 @@ def main():
                         st.plotly_chart(timeline_fig, use_container_width=True)
                     
                     # Format data for display and export
-                    start_date_str = start_date.strftime('%Y-%m-%d') if isinstance(start_date, datetime) else None
-                    end_date_str = end_date.strftime('%Y-%m-%d') if isinstance(end_date, datetime) else None
+                    start_date_str = start_date.strftime('%Y-%m-%d')
+                    end_date_str = end_date.strftime('%Y-%m-%d')
                     
                     export_data = processor.format_data_for_export(
                         data,

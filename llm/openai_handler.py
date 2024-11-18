@@ -22,10 +22,8 @@ class LLMHandler:
         try:
             if not isinstance(response_json, dict):
                 return False
-            # Add basic validation checks
             if "error" in response_json:
                 return False
-            # Check for required fields based on the response type
             if "metadata" in response_json:
                 if not all(k in response_json["metadata"] for k in ["timestamp", "model_version"]):
                     return False
@@ -41,7 +39,7 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a testing system. Return this in JSON format with a 'status' field containing 'ok'"
+                        "content": "You are an expert. Respond with a JSON object containing the following structure: {'status': 'ok'}"
                     },
                     {
                         "role": "user",
@@ -68,26 +66,28 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are a content analysis expert. Return this analysis in JSON format with the exact structure specified below:
+                        "content": """You are an expert. Respond with a JSON object containing the following structure:
                         {
-                            "summary": {
-                                "short": "2-3 sentence summary",
-                                "key_points": ["point1", "point2", "point3"]
-                            },
-                            "sentiment": {
-                                "label": "positive/negative/neutral",
-                                "confidence": 0.0 to 1.0,
-                                "analysis": "Brief explanation"
-                            },
-                            "topics": {
-                                "main_topic": "string",
-                                "subtopics": ["topic1", "topic2", "topic3"],
-                                "confidence": 0.0 to 1.0
-                            },
-                            "content_quality": {
-                                "readability_score": 0.0 to 1.0,
-                                "technical_level": "basic/intermediate/advanced",
-                                "audience": "general/technical/academic"
+                            "content_analysis": {
+                                "summary": {
+                                    "short": "2-3 sentence summary",
+                                    "key_points": ["point1", "point2", "point3"]
+                                },
+                                "sentiment": {
+                                    "label": "positive/negative/neutral",
+                                    "confidence": 0.0 to 1.0,
+                                    "analysis": "Brief explanation"
+                                },
+                                "topics": {
+                                    "main_topic": "string",
+                                    "subtopics": ["topic1", "topic2", "topic3"],
+                                    "confidence": 0.0 to 1.0
+                                },
+                                "content_quality": {
+                                    "readability_score": 0.0 to 1.0,
+                                    "technical_level": "basic/intermediate/advanced",
+                                    "audience": "general/technical/academic"
+                                }
                             }
                         }"""
                     },
@@ -100,7 +100,6 @@ class LLMHandler:
             if not self.validate_response(result):
                 return {"error": "Invalid response format from OpenAI"}
             
-            # Add metadata
             result["metadata"] = {
                 "timestamp": datetime.utcnow().isoformat(),
                 "source_url": url,
@@ -128,22 +127,24 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are a content categorization expert. Return this analysis in JSON format with the exact structure specified below:
+                        "content": """You are an expert. Respond with a JSON object containing the following structure:
                         {
-                            "categories": {
-                                "primary": "string",
-                                "secondary": ["category1", "category2", "category3"],
-                                "confidence": 0.0 to 1.0
-                            },
-                            "content_type": {
-                                "type": "article/blog/news/research/other",
-                                "confidence": 0.0 to 1.0,
-                                "attributes": ["attribute1", "attribute2"]
-                            },
-                            "domain_specific": {
-                                "field": "string",
-                                "relevance_score": 0.0 to 1.0,
-                                "key_terms": ["term1", "term2", "term3"]
+                            "categorization": {
+                                "categories": {
+                                    "primary": "string",
+                                    "secondary": ["category1", "category2", "category3"],
+                                    "confidence": 0.0 to 1.0
+                                },
+                                "content_type": {
+                                    "type": "article/blog/news/research/other",
+                                    "confidence": 0.0 to 1.0,
+                                    "attributes": ["attribute1", "attribute2"]
+                                },
+                                "domain_specific": {
+                                    "field": "string",
+                                    "relevance_score": 0.0 to 1.0,
+                                    "key_terms": ["term1", "term2", "term3"]
+                                }
                             }
                         }"""
                     },
@@ -170,7 +171,6 @@ class LLMHandler:
             return {"error": "Invalid input: text must be a non-empty string"}
         
         try:
-            # Get both analysis and categorization
             analysis = self.analyze_content(text, url)
             if "error" in analysis:
                 return {"error": f"Analysis failed: {analysis['error']}"}
@@ -179,28 +179,27 @@ class LLMHandler:
             if "error" in categories:
                 return {"error": f"Categorization failed: {categories['error']}"}
             
-            # Format data for training
             training_data = {
                 "raw_content": text,
                 "processed_content": {
-                    "summary": analysis.get("summary", {}),
-                    "topics": analysis.get("topics", {}),
-                    "sentiment": analysis.get("sentiment", {})
+                    "summary": analysis.get("content_analysis", {}).get("summary", {}),
+                    "topics": analysis.get("content_analysis", {}).get("topics", {}),
+                    "sentiment": analysis.get("content_analysis", {}).get("sentiment", {})
                 },
                 "classifications": {
-                    "categories": categories.get("categories", {}),
-                    "content_type": categories.get("content_type", {}),
-                    "domain": categories.get("domain_specific", {})
+                    "categories": categories.get("categorization", {}).get("categories", {}),
+                    "content_type": categories.get("categorization", {}).get("content_type", {}),
+                    "domain": categories.get("categorization", {}).get("domain_specific", {})
                 },
                 "metadata": {
                     "source_url": url,
                     "timestamp": datetime.utcnow().isoformat(),
                     "model_version": self.model,
-                    "quality_metrics": analysis.get("content_quality", {}),
+                    "quality_metrics": analysis.get("content_analysis", {}).get("content_quality", {}),
                     "confidence_scores": {
-                        "sentiment": analysis.get("sentiment", {}).get("confidence", 0.0),
-                        "topics": analysis.get("topics", {}).get("confidence", 0.0),
-                        "categories": categories.get("categories", {}).get("confidence", 0.0)
+                        "sentiment": analysis.get("content_analysis", {}).get("sentiment", {}).get("confidence", 0.0),
+                        "topics": analysis.get("content_analysis", {}).get("topics", {}).get("confidence", 0.0),
+                        "categories": categories.get("categorization", {}).get("categories", {}).get("confidence", 0.0)
                     }
                 }
             }

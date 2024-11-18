@@ -119,7 +119,8 @@ class DataProcessor:
     @staticmethod
     def create_summary_visualization(data: List[tuple]) -> go.Figure:
         """Create summary visualization from database records"""
-        df = pd.DataFrame(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
+        # Update column names to match database schema
+        df = pd.DataFrame(data, columns=['id', 'url', 'content', 'raw_content', 'analysis', 'processing_metadata', 'created_at'])
         
         def parse_analysis(x):
             if isinstance(x, str):

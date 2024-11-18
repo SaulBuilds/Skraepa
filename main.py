@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 import io
 import os
 import logging
+import asyncio
+from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -66,75 +68,177 @@ except Exception as e:
 
 processor = DataProcessor()
 
-def process_url_with_progress(url: str, progress_text=None, progress_bar=None, current_idx=None, total=None) -> Dict:
-    """Process a single URL with progress indicators"""
+async def process_url_with_progress(url: str, depth: int = 1, progress_text=None, progress_bar=None, current_idx=None, total=None) -> Dict:
+    """Process a single URL with recursive scraping and progress tracking"""
     try:
         if progress_text:
-            progress_text.text("Step 1/4: Scraping content...")
+            progress_text.text(f"Step 1/4: Scraping content (Depth: {depth})...")
         
-        # Scrape content
-        result = scraper.scrape_url(url)
-        if not result["success"]:
-            return {"success": False, "error": result.get("error", "Unknown error")}
+        # Initialize URL tree for visualization
+        url_tree = defaultdict(list)
+        processed_urls = set()
         
-        if progress_text:
-            progress_text.text("Step 2/4: Cleaning content...")
+        async def progress_callback(url: str, current_depth: int, total_processed: int):
+            """Callback to update progress during recursive scraping"""
+            if progress_text:
+                progress_text.text(f"Scraping page {total_processed} at depth {current_depth}: {url}")
+            if progress_bar:
+                progress_bar.progress(min(1.0, total_processed / scraper.max_pages_per_domain))
         
-        # Clean content
-        cleaned_content = processor.clean_text(result["content"])
-        raw_content = result["content"]  # Store raw content
+        # Set progress callback
+        scraper.set_progress_callback(progress_callback)
         
-        if progress_text:
-            progress_text.text("Step 3/4: Analyzing content...")
-        
-        # Analyze with LLM
-        analysis = llm.analyze_content(cleaned_content, url)
-        if "error" in analysis:
-            return {"success": False, "error": f"Analysis failed: {analysis['error']}"}
-        
-        categorization = llm.categorize_content(cleaned_content)
-        if "error" in categorization:
-            return {"success": False, "error": f"Categorization failed: {categorization['error']}"}
-        
-        if progress_text:
-            progress_text.text("Step 4/4: Saving data...")
-        
-        # Prepare processing metadata
-        processing_metadata = {
-            "processing_timestamp": datetime.utcnow().isoformat(),
-            "processing_status": "completed",
-            "processing_steps": [
-                "content_scraped",
-                "content_cleaned",
-                "content_analyzed",
-                "content_categorized"
-            ]
-        }
-        
-        # Save to database with raw content
-        try:
-            db.save_data(url, cleaned_content, raw_content, analysis, processing_metadata)
-        except Exception as e:
-            logger.error(f"Failed to save data: {str(e)}")
-            return {"success": False, "error": f"Failed to save data: {str(e)}"}
-        
-        # Update progress
-        if progress_bar is not None and total is not None and current_idx is not None:
-            progress = (current_idx + 1) / total
-            progress_bar.progress(progress)
-        
-        return {
-            "success": True,
-            "url": url,
-            "analysis": {
-                "content_analysis": analysis,
-                "categorization": categorization,
-                "raw_content": raw_content
+        # Use recursive scraping if depth > 1
+        if depth > 1:
+            results = await scraper.recursive_scrape(url)
+            # Process each result and update URL tree
+            processed_results = []
+            for result in results:
+                if result["success"]:
+                    current_url = result["url"]
+                    parent_url = None
+                    # Find parent URL
+                    for potential_parent, links in url_tree.items():
+                        if current_url in links:
+                            parent_url = potential_parent
+                            break
+                    if parent_url:
+                        url_tree[parent_url].append(current_url)
+                    else:
+                        url_tree[url].append(current_url)
+                    
+                    # Process content with LLM and store in database
+                    if progress_text:
+                        progress_text.text(f"Processing content from: {current_url}")
+                    
+                    cleaned_content = processor.clean_text(result["content"])
+                    raw_content = result["content"]
+                    
+                    # Analyze with LLM
+                    analysis = llm.analyze_content(cleaned_content, current_url)
+                    if "error" in analysis:
+                        continue
+                    
+                    categorization = llm.categorize_content(cleaned_content)
+                    if "error" in categorization:
+                        continue
+                    
+                    # Save to database
+                    try:
+                        processing_metadata = {
+                            "processing_timestamp": datetime.utcnow().isoformat(),
+                            "processing_status": "completed",
+                            "processing_steps": [
+                                "content_scraped",
+                                "content_cleaned",
+                                "content_analyzed",
+                                "content_categorized"
+                            ],
+                            "depth": depth,
+                            "parent_url": parent_url
+                        }
+                        
+                        db.save_data(current_url, cleaned_content, raw_content, analysis, processing_metadata)
+                        processed_results.append({
+                            "url": current_url,
+                            "analysis": {
+                                "content_analysis": analysis,
+                                "categorization": categorization,
+                                "raw_content": raw_content
+                            }
+                        })
+                    except Exception as e:
+                        logger.error(f"Failed to save data for {current_url}: {str(e)}")
+            
+            if progress_text:
+                progress_text.text("Step 4/4: All pages processed!")
+            
+            return {
+                "success": True,
+                "url": url,
+                "results": processed_results,
+                "url_tree": dict(url_tree)
             }
-        }
+        else:
+            # Single URL processing
+            result = await scraper.scrape_single_url(url)
+            if not result["success"]:
+                return {"success": False, "error": result.get("error", "Unknown error")}
+            
+            if progress_text:
+                progress_text.text("Step 2/4: Cleaning content...")
+            
+            # Clean content
+            cleaned_content = processor.clean_text(result["content"])
+            raw_content = result["content"]
+            
+            if progress_text:
+                progress_text.text("Step 3/4: Analyzing content...")
+            
+            # Analyze with LLM
+            analysis = llm.analyze_content(cleaned_content, url)
+            if "error" in analysis:
+                return {"success": False, "error": f"Analysis failed: {analysis['error']}"}
+            
+            categorization = llm.categorize_content(cleaned_content)
+            if "error" in categorization:
+                return {"success": False, "error": f"Categorization failed: {categorization['error']}"}
+            
+            if progress_text:
+                progress_text.text("Step 4/4: Saving data...")
+            
+            # Save to database
+            try:
+                processing_metadata = {
+                    "processing_timestamp": datetime.utcnow().isoformat(),
+                    "processing_status": "completed",
+                    "processing_steps": [
+                        "content_scraped",
+                        "content_cleaned",
+                        "content_analyzed",
+                        "content_categorized"
+                    ],
+                    "depth": depth
+                }
+                
+                db.save_data(url, cleaned_content, raw_content, analysis, processing_metadata)
+            except Exception as e:
+                logger.error(f"Failed to save data: {str(e)}")
+                return {"success": False, "error": f"Failed to save data: {str(e)}"}
+            
+            # Update progress
+            if progress_bar is not None and total is not None and current_idx is not None:
+                progress = (current_idx + 1) / total
+                progress_bar.progress(progress)
+            
+            return {
+                "success": True,
+                "url": url,
+                "analysis": {
+                    "content_analysis": analysis,
+                    "categorization": categorization,
+                    "raw_content": raw_content
+                }
+            }
     except Exception as e:
         logger.error(f"Error processing URL {url}: {str(e)}")
         return {"success": False, "error": str(e)}
+
+def display_url_tree(url_tree: Dict[str, List[str]], container):
+    """Display URL tree in a hierarchical format"""
+    def _display_branch(url: str, children: List[str], level: int = 0):
+        prefix = "  " * level + ("└── " if level > 0 else "")
+        container.markdown(f"`{prefix}{url}`")
+        for child in children:
+            if child in url_tree:
+                _display_branch(child, url_tree[child], level + 1)
+            else:
+                child_prefix = "  " * (level + 1) + "└── "
+                container.markdown(f"`{child_prefix}{child}`")
+    
+    root_urls = [url for url in url_tree.keys() if not any(url in children for children in url_tree.values())]
+    for root_url in root_urls:
+        _display_branch(root_url, url_tree[root_url])
 
 def main():
     st.markdown("<h1 style='font-weight: 900; font-size: 3.5em; margin-bottom: 0.2em;'>SKRAEPA</h1>", unsafe_allow_html=True)
@@ -148,6 +252,15 @@ def main():
         st.markdown('<div class="card">', unsafe_allow_html=True)
         url = st.text_input("Enter URL to analyze")
         
+        # Add depth selector
+        depth = st.slider(
+            "Scraping Depth",
+            min_value=1,
+            max_value=5,
+            value=1,
+            help="1 = Current page only, >1 = Include linked pages up to selected depth"
+        )
+        
         if st.button("Analyze"):
             if not processor.validate_url(url):
                 st.error("Invalid URL format. Please enter a valid URL.")
@@ -157,28 +270,45 @@ def main():
             progress_bar = st.progress(0)
             
             with st.spinner("Processing URL..."):
-                result = process_url_with_progress(url, progress_text, progress_bar, 0, 1)
+                result = asyncio.run(process_url_with_progress(url, depth, progress_text, progress_bar, 0, 1))
                 
                 if result["success"]:
                     progress_text.text("Processing completed!")
                     progress_bar.progress(1.0)
                     
-                    # Display results
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("### Content Analysis")
-                        st.json(result["analysis"]["content_analysis"])
-                    
-                    with col2:
-                        st.markdown("### Content Categorization")
-                        st.json(result["analysis"]["categorization"])
+                    if depth > 1 and "url_tree" in result:
+                        # Display URL tree
+                        st.markdown("### Scraped Pages Structure")
+                        display_url_tree(result["url_tree"], st)
+                        
+                        # Display aggregated results
+                        st.markdown("### Analysis Results")
+                        for page_result in result["results"]:
+                            with st.expander(f"Results for {page_result['url']}"):
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.markdown("#### Content Analysis")
+                                    st.json(page_result["analysis"]["content_analysis"])
+                                with col2:
+                                    st.markdown("#### Content Categorization")
+                                    st.json(page_result["analysis"]["categorization"])
+                    else:
+                        # Display single page results
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("### Content Analysis")
+                            st.json(result["analysis"]["content_analysis"])
+                        with col2:
+                            st.markdown("### Content Categorization")
+                            st.json(result["analysis"]["categorization"])
                     
                     # Download button for the analysis
                     export_dict = {
                         "url": url,
-                        "content": result["analysis"]["raw_content"],
-                        "analysis": result["analysis"],
+                        "depth": depth,
+                        "content": result.get("analysis", {}).get("raw_content", ""),
+                        "analysis": result.get("analysis", {}),
+                        "url_tree": result.get("url_tree", {}),
                         "metadata": {
                             "timestamp": datetime.utcnow().isoformat(),
                             "version": "1.0"

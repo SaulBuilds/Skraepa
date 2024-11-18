@@ -1,5 +1,5 @@
 import trafilatura
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, Tuple
 import asyncio
 from urllib.parse import urlparse, urljoin
 import logging
@@ -76,6 +76,59 @@ class WebScraper:
             return False
         return True
 
+    async def extract_media(self, html_content: str, base_url: str) -> Dict[str, List[Dict[str, str]]]:
+        """Extract media (images and videos) from HTML content"""
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            media = {
+                'images': [],
+                'videos': []
+            }
+
+            # Extract images
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src:
+                    absolute_url = urljoin(base_url, src)
+                    if self.validate_url(absolute_url):
+                        media['images'].append({
+                            'url': absolute_url,
+                            'alt': img.get('alt', ''),
+                            'metadata': {
+                                'width': img.get('width', ''),
+                                'height': img.get('height', ''),
+                                'class': img.get('class', []),
+                                'loading': img.get('loading', 'eager')
+                            }
+                        })
+
+            # Extract videos
+            for video in soup.find_all(['video', 'iframe']):
+                src = video.get('src')
+                if not src and video.name == 'video':
+                    source = video.find('source')
+                    if source:
+                        src = source.get('src')
+                
+                if src:
+                    absolute_url = urljoin(base_url, src)
+                    if self.validate_url(absolute_url):
+                        media['videos'].append({
+                            'url': absolute_url,
+                            'type': video.name,
+                            'metadata': {
+                                'width': video.get('width', ''),
+                                'height': video.get('height', ''),
+                                'autoplay': video.get('autoplay', False),
+                                'controls': video.get('controls', False)
+                            }
+                        })
+
+            return media
+        except Exception as e:
+            logger.error(f"Error extracting media from {base_url}: {str(e)}")
+            return {'images': [], 'videos': []}
+
     async def extract_links(self, html_content: str, base_url: str) -> List[str]:
         """Extract and validate internal links from HTML content"""
         try:
@@ -136,6 +189,9 @@ class WebScraper:
                         if content is None:
                             raise ValueError("No content extracted")
 
+                        # Extract media content
+                        media = await self.extract_media(html_content, url)
+
                         self.visited_urls.add(url)
                         logger.info(f"Successfully scraped URL: {url}")
 
@@ -146,6 +202,7 @@ class WebScraper:
                             "url": url,
                             "success": True,
                             "content": content,
+                            "media": media,
                             "links": await self.extract_links(html_content, url)
                         }
 

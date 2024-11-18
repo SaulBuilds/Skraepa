@@ -5,7 +5,8 @@ from llm.openai_handler import LLMHandler
 from db.database import Database
 from utils.data_processor import DataProcessor
 import json
-from typing import List
+from typing import List, Dict, Any
+from datetime import datetime
 
 # Page configuration
 st.set_page_config(
@@ -145,21 +146,26 @@ def dashboard_mode():
     data = db.get_all_data()
     
     if data:
-        # Create visualizations
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            summary_fig = processor.create_summary_visualization(data)
-            st.plotly_chart(summary_fig, use_container_width=True)
-        
-        with col2:
-            timeline_fig = processor.create_timeline_visualization(data)
-            st.plotly_chart(timeline_fig, use_container_width=True)
-        
-        # Display recent entries
-        st.markdown("### Recent Entries")
-        df = pd.DataFrame(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
-        st.dataframe(df[['url', 'created_at']].head(10))
+        try:
+            # Create visualizations
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                summary_fig = processor.create_summary_visualization(data)
+                st.plotly_chart(summary_fig, use_container_width=True)
+            
+            with col2:
+                timeline_fig = processor.create_timeline_visualization(data)
+                st.plotly_chart(timeline_fig, use_container_width=True)
+            
+            # Display recent entries
+            st.markdown("### Recent Entries")
+            df = pd.DataFrame.from_records(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
+            display_df = df[['url', 'created_at']].copy()
+            display_df['created_at'] = pd.to_datetime(display_df['created_at'])
+            st.dataframe(display_df.sort_values('created_at', ascending=False).head(10))
+        except Exception as e:
+            st.error(f"Error processing dashboard data: {str(e)}")
     else:
         st.info("No data available yet. Start by analyzing some URLs!")
     

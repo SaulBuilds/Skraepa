@@ -2,10 +2,9 @@ import os
 import json
 from datetime import datetime
 import psycopg2
-from psycopg2.extras import Json, execute_batch
+from psycopg2.extras import Json
 import logging
 import uuid
-from typing import List, Dict, Any, Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,161 +28,75 @@ class Database:
 
     def create_tables(self):
         """Create database tables with proper error handling and order"""
-        cursor = None
-        try:
-            cursor = self.conn.cursor()
-            
-            # Start transaction
-            cursor.execute("BEGIN;")
-            
-            # Create harvested_data table with all columns
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS harvested_data (
-                    id SERIAL PRIMARY KEY,
-                    url TEXT NOT NULL,
-                    content TEXT,
-                    raw_content TEXT,
-                    analysis JSONB,
-                    processing_metadata JSONB,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    session_id VARCHAR(64),
-                    is_temporary BOOLEAN DEFAULT TRUE,
-                    last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            
-            # Create harvested_media table with all columns
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS harvested_media (
-                    id SERIAL PRIMARY KEY,
-                    harvested_data_id INTEGER REFERENCES harvested_data(id) ON DELETE CASCADE,
-                    media_type VARCHAR(10) NOT NULL,
-                    url TEXT NOT NULL,
-                    metadata JSONB,
-                    download_status VARCHAR(20) DEFAULT 'pending',
-                    content_type VARCHAR(100),
-                    file_size BIGINT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    session_id VARCHAR(64),
-                    is_temporary BOOLEAN DEFAULT TRUE
-                );
-            """)
-            
-            # Create indexes for better performance
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_session_temp ON harvested_data(session_id, is_temporary);
-                CREATE INDEX IF NOT EXISTS idx_media_session_temp ON harvested_media(session_id, is_temporary);
-                CREATE INDEX IF NOT EXISTS idx_media_type_status ON harvested_media(media_type, download_status);
-                CREATE INDEX IF NOT EXISTS idx_media_content_type ON harvested_media(content_type);
-                CREATE INDEX IF NOT EXISTS idx_media_created_at ON harvested_media(created_at);
-            """)
-            
-            # Commit transaction
-            self.conn.commit()
-            logger.info("Database tables created successfully")
-            
-        except Exception as e:
-            # Rollback transaction on error
-            if self.conn:
-                self.conn.rollback()
-            logger.error(f"Failed to create tables: {str(e)}")
-            raise
-        finally:
-            if cursor:
-                cursor.close()
-
-    def save_batch_media(self, media_entries: List[Dict[str, Any]], session_id: Optional[str] = None) -> List[int]:
-        """Save multiple media entries in batch"""
         try:
             with self.conn.cursor() as cur:
-                query = """
-                    INSERT INTO harvested_media 
-                    (harvested_data_id, media_type, url, metadata, session_id, 
-                     download_status, content_type, file_size)
-                    VALUES (
-                        %(harvested_data_id)s, 
-                        %(media_type)s, 
-                        %(url)s, 
-                        %(metadata)s,
-                        %(session_id)s,
-                        %(download_status)s,
-                        %(content_type)s,
-                        %(file_size)s
+                # Create base harvested_data table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS harvested_data (
+                        id SERIAL PRIMARY KEY,
+                        url TEXT NOT NULL,
+                        content TEXT,
+                        raw_content TEXT,
+                        analysis JSONB,
+                        processing_metadata JSONB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
-                    RETURNING id
-                """
+                """)
+
+                # Add session management columns to harvested_data
+                cur.execute("""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='harvested_data' AND column_name='session_id'
+                        ) THEN
+                            ALTER TABLE harvested_data 
+                            ADD COLUMN session_id VARCHAR(64),
+                            ADD COLUMN is_temporary BOOLEAN DEFAULT TRUE,
+                            ADD COLUMN last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                    END $$;
+                """)
+
+                # Create base harvested_media table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS harvested_media (
+                        id SERIAL PRIMARY KEY,
+                        harvested_data_id INTEGER REFERENCES harvested_data(id) ON DELETE CASCADE,
+                        media_type VARCHAR(10) NOT NULL,
+                        url TEXT NOT NULL,
+                        metadata JSONB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # Add session management columns to harvested_media
+                cur.execute("""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='harvested_media' AND column_name='session_id'
+                        ) THEN
+                            ALTER TABLE harvested_media 
+                            ADD COLUMN session_id VARCHAR(64),
+                            ADD COLUMN is_temporary BOOLEAN DEFAULT TRUE;
+                        END IF;
+                    END $$;
+                """)
+
+                # Create indexes for better performance
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_session_temp ON harvested_data(session_id, is_temporary);
+                    CREATE INDEX IF NOT EXISTS idx_media_session_temp ON harvested_media(session_id, is_temporary);
+                """)
                 
-                # Prepare batch data
-                batch_data = []
-                for entry in media_entries:
-                    download_info = entry.get('metadata', {}).get('download_info', {})
-                    batch_data.append({
-                        'harvested_data_id': entry['harvested_data_id'],
-                        'media_type': entry['media_type'],
-                        'url': entry['url'],
-                        'metadata': Json(entry['metadata']),
-                        'session_id': session_id,
-                        'download_status': download_info.get('status', 'pending'),
-                        'content_type': download_info.get('content_type'),
-                        'file_size': download_info.get('size')
-                    })
-
-                # Execute batch insert
-                results = []
-                for data in batch_data:
-                    cur.execute(query, data)
-                    results.append(cur.fetchone()[0])
-
                 self.conn.commit()
-                logger.info(f"Batch saved {len(results)} media entries")
-                return results
-
+                logger.info("Database tables created successfully")
         except Exception as e:
-            logger.error(f"Failed to save batch media: {str(e)}")
+            logger.error(f"Failed to create tables: {str(e)}")
             self.conn.rollback()
-            raise
-
-    def get_media_statistics(self, session_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get statistics about stored media"""
-        try:
-            with self.conn.cursor() as cur:
-                query = """
-                    SELECT 
-                        media_type,
-                        COUNT(*) as total_count,
-                        COUNT(CASE WHEN download_status = 'available' THEN 1 END) as available_count,
-                        SUM(CASE WHEN file_size IS NOT NULL THEN file_size ELSE 0 END) as total_size,
-                        COUNT(DISTINCT content_type) as format_count
-                    FROM harvested_media
-                    WHERE ($1::varchar IS NULL OR session_id = $1)
-                    GROUP BY media_type
-                """
-                
-                cur.execute(query, (session_id,))
-                results = cur.fetchall()
-                
-                statistics = {
-                    'images': {'count': 0, 'available': 0, 'total_size': 0, 'formats': 0},
-                    'videos': {'count': 0, 'available': 0, 'total_size': 0, 'formats': 0},
-                    'total': {'count': 0, 'available': 0, 'total_size': 0, 'formats': 0}
-                }
-                
-                for row in results:
-                    media_type, total, available, size, formats = row
-                    statistics[media_type] = {
-                        'count': total,
-                        'available': available,
-                        'total_size': size,
-                        'formats': formats
-                    }
-                    statistics['total']['count'] += total
-                    statistics['total']['available'] += available
-                    statistics['total']['total_size'] += size
-                    statistics['total']['formats'] += formats
-                
-                return statistics
-        except Exception as e:
-            logger.error(f"Failed to get media statistics: {str(e)}")
             raise
 
     def save_data(self, url: str, content: str, raw_content: str, analysis: dict, processing_metadata: dict | None = None, session_id: str | None = None) -> int:

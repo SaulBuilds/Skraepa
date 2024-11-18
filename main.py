@@ -240,6 +240,107 @@ def display_url_tree(url_tree: Dict[str, List[str]], container):
     for root_url in root_urls:
         _display_branch(root_url, url_tree[root_url])
 
+def display_media_preview(media_data: Dict[str, Any], container):
+    """Display media preview with download options"""
+    if not media_data:
+        return
+    
+    images = media_data.get('images', [])
+    videos = media_data.get('videos', [])
+    metadata = media_data.get('metadata', {})
+    
+    # Display statistics
+    col1, col2, col3 = container.columns(3)
+    col1.metric("Total Media", metadata.get('total_count', 0))
+    col2.metric("Processed", metadata.get('processed_count', 0))
+    col3.metric("Failed", metadata.get('failed_count', 0))
+    
+    # Display media content
+    if images or videos:
+        tabs = container.tabs(["Images", "Videos"])
+        
+        with tabs[0]:
+            if images:
+                for idx, img in enumerate(images):
+                    col1, col2 = st.columns([2, 3])
+                    with col1:
+                        st.image(img['url'], caption=img.get('alt', ''), use_column_width=True)
+                    with col2:
+                        st.markdown(f"**URL:** `{img['url']}`")
+                        st.markdown(f"**Size:** {img['metadata']['download_info'].get('size', 'Unknown')} bytes")
+                        st.markdown(f"**Type:** {img['metadata']['download_info'].get('content_type', 'Unknown')}")
+                        if img.get('alternative_sources'):
+                            st.markdown("**Alternative Sources:**")
+                            for src in img['alternative_sources']:
+                                st.markdown(f"- {src if isinstance(src, str) else src['url']}")
+            else:
+                st.info("No images found")
+        
+        with tabs[1]:
+            if videos:
+                for idx, video in enumerate(videos):
+                    st.markdown(f"### Video {idx + 1}")
+                    col1, col2 = st.columns([2, 3])
+                    with col1:
+                        if 'youtube' in video['url'].lower():
+                            st.video(video['url'])
+                        else:
+                            st.markdown(f"<video width='100%' controls><source src='{video['url']}'></video>", 
+                                      unsafe_allow_html=True)
+                    with col2:
+                        st.markdown(f"**URL:** `{video['url']}`")
+                        st.markdown(f"**Type:** {video['metadata']['download_info'].get('content_type', 'Unknown')}")
+                        st.markdown(f"**Size:** {video['metadata']['download_info'].get('size', 'Unknown')} bytes")
+                        if video.get('alternative_sources'):
+                            st.markdown("**Alternative Sources:**")
+                            for src in video['alternative_sources']:
+                                st.markdown(f"- {src if isinstance(src, str) else src['url']}")
+            else:
+                st.info("No videos found")
+
+def display_media_stats(db_instance: Database, container):
+    """Display media statistics in dashboard"""
+    try:
+        stats = db_instance.get_media_statistics()
+        
+        container.markdown("### Media Statistics")
+        
+        # Overall stats
+        total = stats['total']
+        cols = container.columns(4)
+        cols[0].metric("Total Files", total['count'])
+        cols[1].metric("Available", total['available'])
+        cols[2].metric("Total Size", f"{total['total_size']/1024/1024:.2f} MB")
+        cols[3].metric("File Formats", total['formats'])
+        
+        # Detailed stats by type
+        container.markdown("#### By Media Type")
+        col1, col2 = container.columns(2)
+        
+        # Images stats
+        with col1:
+            st.markdown("**Images**")
+            img_stats = stats['images']
+            st.markdown(f"""
+            - Count: {img_stats['count']}
+            - Available: {img_stats['available']}
+            - Total Size: {img_stats['total_size']/1024/1024:.2f} MB
+            - Formats: {img_stats['formats']}
+            """)
+        
+        # Videos stats
+        with col2:
+            st.markdown("**Videos**")
+            video_stats = stats['videos']
+            st.markdown(f"""
+            - Count: {video_stats['count']}
+            - Available: {video_stats['available']}
+            - Total Size: {video_stats['total_size']/1024/1024:.2f} MB
+            - Formats: {video_stats['formats']}
+            """)
+    except Exception as e:
+        container.error(f"Failed to load media statistics: {str(e)}")
+
 def main():
     st.markdown("<h1 style='font-weight: 900; font-size: 3.5em; margin-bottom: 0.2em;'>SKRAEPA</h1>", unsafe_allow_html=True)
     st.markdown("<h2 style='font-weight: 400; color: #7792E3;'>Data Harvesting & Analysis Platform</h2>", unsafe_allow_html=True)
@@ -302,20 +403,18 @@ def main():
                             st.markdown("### Content Categorization")
                             st.json(result["analysis"]["categorization"])
                     
+                    # Display media content
+                    if "media" in result["analysis"]:
+                        st.markdown("### Media Content")
+                        display_media_preview(result["analysis"]["media"], st)
+                    
                     # Download button for the analysis
                     export_dict = {
                         "url": url,
-                        "depth": depth,
-                        "content": result.get("analysis", {}).get("raw_content", ""),
-                        "analysis": result.get("analysis", {}),
-                        "url_tree": result.get("url_tree", {}),
-                        "metadata": {
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "version": "1.0"
-                        }
+                        "analysis": result["analysis"]
                     }
                     
-                    json_str = json.dumps(export_dict, indent=2, ensure_ascii=False)
+                    json_str = json.dumps(export_dict, indent=2)
                     st.download_button(
                         label="Download Analysis",
                         data=json_str,
@@ -323,230 +422,216 @@ def main():
                         mime="application/json"
                     )
                 else:
-                    progress_text.text("Processing failed!")
-                    st.error(f"Failed to process URL: {result.get('error', 'Unknown error')}")
-        
+                    st.error(f"Error: {result.get('error', 'Unknown error occurred')}")
         st.markdown('</div>', unsafe_allow_html=True)
     
     elif mode == "Batch Processing":
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("Upload URLs (one per line)", type=["txt"])
+        st.markdown("### Batch URL Processing")
         
-        if uploaded_file is not None:
-            urls = uploaded_file.getvalue().decode().splitlines()
-            urls = [url.strip() for url in urls if url.strip()]
+        urls_input = st.text_area(
+            "Enter URLs (one per line)",
+            height=150,
+            help="Enter each URL on a new line"
+        )
+        
+        if st.button("Process Batch"):
+            urls = [url.strip() for url in urls_input.split('\n') if url.strip()]
             
-            # Validate URLs
+            if not urls:
+                st.warning("Please enter at least one URL")
+                return
+            
             invalid_urls = [url for url in urls if not processor.validate_url(url)]
             if invalid_urls:
-                st.warning(f"Found {len(invalid_urls)} invalid URLs. They will be skipped.")
+                st.error(f"Invalid URLs detected:\n{chr(10).join(invalid_urls)}")
+                return
             
-            valid_urls = [url for url in urls if processor.validate_url(url)]
+            progress_text = st.empty()
+            progress_bar = st.progress(0)
             
-            if st.button("Process Batch"):
-                overall_progress = st.progress(0)
-                current_url_progress = st.progress(0)
-                status_text = st.empty()
-                detail_text = st.empty()
-                
+            with st.spinner("Processing URLs..."):
                 results = []
-                for idx, url in enumerate(valid_urls):
-                    overall_progress.progress((idx) / len(valid_urls))
-                    status_text.text(f"Processing URL {idx + 1} of {len(valid_urls)}: {url}")
-                    
-                    result = process_url_with_progress(
+                for idx, url in enumerate(urls):
+                    result = asyncio.run(process_url_with_progress(
                         url,
-                        detail_text,
-                        current_url_progress,
+                        1,
+                        progress_text,
+                        progress_bar,
                         idx,
-                        len(valid_urls)
-                    )
+                        len(urls)
+                    ))
                     results.append(result)
+                
+                # Display results
+                stats = processor.process_batch_results(results)
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Total URLs", stats['total'])
+                col2.metric("Successful", stats['successful'])
+                col3.metric("Failed", stats['failed'])
+                col4.metric("Success Rate", f"{stats['success_rate']}%")
+                
+                # Display detailed results
+                for result in results:
+                    if result["success"]:
+                        with st.expander(f"Results for {result['url']}"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.markdown("#### Content Analysis")
+                                st.json(result["analysis"]["content_analysis"])
+                            with col2:
+                                st.markdown("#### Content Categorization")
+                                st.json(result["analysis"]["categorization"])
+                            
+                            if "media" in result["analysis"]:
+                                st.markdown("#### Media Content")
+                                display_media_preview(result["analysis"]["media"], st)
+                    else:
+                        st.error(f"Failed to process {result['url']}: {result.get('error', 'Unknown error')}")
+                
+                # Export option
+                if st.button("Export All Results"):
+                    export_data = json.dumps(results, indent=2)
+                    st.download_button(
+                        label="Download JSON",
+                        data=export_data,
+                        file_name=f"batch_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json"
+                    )
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    elif mode == "Dashboard":
+        st.markdown("## Dashboard")
+        
+        # Add media statistics to dashboard
+        stats_container = st.container()
+        display_media_stats(db, stats_container)
+        
+        # Date range filter
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Start Date", datetime.now() - timedelta(days=30))
+        with col2:
+            end_date = st.date_input("End Date", datetime.now())
+        
+        # Fetch all data
+        data = db.get_all_data()
+        
+        if data:
+            try:
+                # Create visualizations
+                viz_col1, viz_col2 = st.columns(2)
+                
+                with viz_col1:
+                    summary_fig = processor.create_summary_visualization(data)
+                    st.plotly_chart(summary_fig, use_container_width=True)
+                
+                with viz_col2:
+                    timeline_fig = processor.create_timeline_visualization(data)
+                    st.plotly_chart(timeline_fig, use_container_width=True)
+                
+                # Format data for display and export
+                start_date_str = start_date.strftime('%Y-%m-%d')
+                end_date_str = end_date.strftime('%Y-%m-%d')
+                
+                export_data = processor.format_data_for_export(
+                    data,
+                    start_date=start_date_str,
+                    end_date=end_date_str
+                )
+                
+                # Display recent entries
+                st.markdown("### Recent Entries")
+                if export_data:
+                    df = pd.DataFrame(export_data)
+                    display_df = pd.DataFrame({
+                        'URL': df['url'],
+                        'Created At': pd.to_datetime(df['metadata'].apply(lambda x: x['created_at']))
+                    })
+                    st.dataframe(display_df.sort_values('Created At', ascending=False).head(10))
                     
-                    current_url_progress.progress(0)
-                
-                overall_progress.progress(1.0)
-                status_text.text("Batch processing completed!")
-                detail_text.text("")
-                
-                # Display batch results
-                successful = sum(1 for r in results if r.get("success", False))
-                failed = len(results) - successful
-                
-                st.success(f"Processed {len(results)} URLs: {successful} successful, {failed} failed")
-                
-                if failed > 0:
-                    st.error("Failed URLs:")
-                    for result in results:
-                        if not result.get("success", False):
-                            st.write(f"- {result.get('url', 'Unknown URL')}: {result.get('error', 'Unknown error')}")
-                
-                if successful > 0:
-                    try:
-                        export_data = processor.format_data_for_export(
-                            db.get_all_data(),
-                            start_date=(datetime.utcnow() - timedelta(hours=1)).isoformat()
-                        )
+                    # Download options
+                    st.markdown("### Download Options")
+                    download_format = st.selectbox(
+                        "Select Format",
+                        ["Full Dataset", "Training Data Only"]
+                    )
+                    
+                    if st.button("Download Data"):
+                        if download_format == "Training Data Only":
+                            download_data = processor.format_training_data(export_data)
+                        else:
+                            download_data = export_data
                         
-                        json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
+                        json_str = json.dumps(download_data, indent=2, ensure_ascii=False)
                         st.download_button(
-                            label="Download Batch Results",
+                            label="Download JSON",
                             data=json_str,
-                            file_name=f"batch_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                            file_name=f"data_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                             mime="application/json"
                         )
-                    except Exception as e:
-                        st.error(f"Failed to prepare download: {str(e)}")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    elif mode == "Settings":
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### Scraper Configuration")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            max_depth = st.slider(
-                "Maximum Scraping Depth",
-                min_value=1,
-                max_value=5,
-                value=3,
-                help="Maximum depth for recursive scraping. Higher values will scrape more pages but take longer."
-            )
             
-            max_pages = st.number_input(
-                "Maximum Pages per Domain",
-                min_value=1,
-                max_value=500,
-                value=100,
-                help="Maximum number of pages to scrape from a single domain."
-            )
-            
-            stay_within_domain = st.toggle(
-                "Stay Within Domain",
-                value=True,
-                help="When enabled, only scrape pages from the same domain as the starting URL."
-            )
-        
-        with col2:
-            timeout = st.slider(
-                "Request Timeout (seconds)",
-                min_value=5,
-                max_value=60,
-                value=30,
-                help="Maximum time to wait for a page to respond."
-            )
-            
-            max_concurrent = st.slider(
-                "Concurrent Requests",
-                min_value=1,
-                max_value=10,
-                value=5,
-                help="Maximum number of simultaneous page requests. Higher values may be faster but could overwhelm servers."
-            )
-            
-            crawl_strategy = st.selectbox(
-                "Crawling Strategy",
-                options=["breadth-first", "depth-first"],
-                help="Breadth-first explores all pages at the current depth before going deeper. Depth-first explores each path to its maximum depth before backtracking."
-            )
-        
-        # Save configuration
-        if st.button("Save Configuration"):
-            try:
-                scraper.max_depth = max_depth
-                scraper.max_pages_per_domain = max_pages
-                scraper.stay_within_domain = stay_within_domain
-                scraper.timeout = timeout
-                scraper.max_concurrent = max_concurrent
-                scraper.crawl_strategy = crawl_strategy
-                
-                st.success("Configuration saved successfully!")
             except Exception as e:
-                st.error(f"Failed to save configuration: {str(e)}")
+                logger.error(f"Error in dashboard visualization: {str(e)}")
+                st.error(f"Error processing dashboard data: {str(e)}")
+        else:
+            st.info("No data available yet. Start by analyzing some URLs!")
+    
+    else:  # Settings mode
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("### Application Settings")
+        
+        # Scraping Settings
+        st.subheader("Scraping Configuration")
+        scraper_settings = {
+            "max_depth": st.slider("Max Scraping Depth", 1, 5, 3),
+            "max_pages": st.slider("Max Pages per Domain", 10, 200, 100),
+            "stay_within_domain": st.checkbox("Stay Within Domain", True),
+            "crawl_strategy": st.selectbox("Crawling Strategy", ["breadth-first", "depth-first"])
+        }
+        
+        # LLM Settings
+        st.subheader("LLM Configuration")
+        llm_settings = {
+            "model": st.selectbox("Model Version", ["gpt-4", "gpt-3.5-turbo"], disabled=True),
+            "max_tokens": st.slider("Max Tokens", 100, 2000, 1000, disabled=True)
+        }
+        
+        if st.button("Test Connections"):
+            col1, col2, col3 = st.columns(3)
+            
+            # Test Database
+            try:
+                with db.conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                col1.success("Database: Connected")
+            except Exception as e:
+                col1.error(f"Database Error: {str(e)}")
+            
+            # Test LLM
+            try:
+                test_result = llm.test_connection()
+                if "error" not in test_result:
+                    col2.success("LLM: Connected")
+                else:
+                    col2.error(f"LLM Error: {test_result['error']}")
+            except Exception as e:
+                col2.error(f"LLM Error: {str(e)}")
+            
+            # Test Scraper
+            try:
+                test_url = "https://example.com"
+                result = asyncio.run(scraper.scrape_single_url(test_url))
+                if result["success"]:
+                    col3.success("Scraper: Working")
+                else:
+                    col3.error(f"Scraper Error: {result.get('error', 'Unknown error')}")
+            except Exception as e:
+                col3.error(f"Scraper Error: {str(e)}")
         
         st.markdown('</div>', unsafe_allow_html=True)
-    
-    else:  # Dashboard mode
-        try:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.markdown("### Data Analysis Dashboard")
-            
-            # Date range filter
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input("Start Date", datetime.now() - timedelta(days=30))
-            with col2:
-                end_date = st.date_input("End Date", datetime.now())
-            
-            # Fetch all data
-            data = db.get_all_data()
-            
-            if data:
-                try:
-                    # Create visualizations
-                    viz_col1, viz_col2 = st.columns(2)
-                    
-                    with viz_col1:
-                        summary_fig = processor.create_summary_visualization(data)
-                        st.plotly_chart(summary_fig, use_container_width=True)
-                    
-                    with viz_col2:
-                        timeline_fig = processor.create_timeline_visualization(data)
-                        st.plotly_chart(timeline_fig, use_container_width=True)
-                    
-                    # Format data for display and export
-                    start_date_str = start_date.strftime('%Y-%m-%d')
-                    end_date_str = end_date.strftime('%Y-%m-%d')
-                    
-                    export_data = processor.format_data_for_export(
-                        data,
-                        start_date=start_date_str,
-                        end_date=end_date_str
-                    )
-                    
-                    # Display recent entries
-                    st.markdown("### Recent Entries")
-                    if export_data:
-                        df = pd.DataFrame(export_data)
-                        display_df = pd.DataFrame({
-                            'URL': df['url'],
-                            'Created At': pd.to_datetime(df['metadata'].apply(lambda x: x['created_at']))
-                        })
-                        st.dataframe(display_df.sort_values('Created At', ascending=False).head(10))
-                        
-                        # Download options
-                        st.markdown("### Download Options")
-                        download_format = st.selectbox(
-                            "Select Format",
-                            ["Full Dataset", "Training Data Only"]
-                        )
-                        
-                        if st.button("Download Data"):
-                            if download_format == "Training Data Only":
-                                download_data = processor.format_training_data(export_data)
-                            else:
-                                download_data = export_data
-                            
-                            json_str = json.dumps(download_data, indent=2, ensure_ascii=False)
-                            st.download_button(
-                                label="Download JSON",
-                                data=json_str,
-                                file_name=f"data_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                                mime="application/json"
-                            )
-                
-                except Exception as e:
-                    logger.error(f"Error in dashboard visualization: {str(e)}")
-                    st.error(f"Error processing dashboard data: {str(e)}")
-            else:
-                st.info("No data available yet. Start by analyzing some URLs!")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-        except Exception as e:
-            logger.error(f"Error in dashboard mode: {str(e)}")
-            st.error(f"Failed to load dashboard: {str(e)}")
 
 if __name__ == "__main__":
     main()

@@ -36,7 +36,7 @@ class Database:
             # Start transaction
             cursor.execute("BEGIN;")
             
-            # 1. Create base harvested_data table first
+            # Create harvested_data table with all columns
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS harvested_data (
                     id SERIAL PRIMARY KEY,
@@ -45,11 +45,14 @@ class Database:
                     raw_content TEXT,
                     analysis JSONB,
                     processing_metadata JSONB,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    session_id VARCHAR(64),
+                    is_temporary BOOLEAN DEFAULT TRUE,
+                    last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
             
-            # 2. Create harvested_media table with all required columns
+            # Create harvested_media table with all columns
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS harvested_media (
                     id SERIAL PRIMARY KEY,
@@ -60,42 +63,13 @@ class Database:
                     download_status VARCHAR(20) DEFAULT 'pending',
                     content_type VARCHAR(100),
                     file_size BIGINT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    session_id VARCHAR(64),
+                    is_temporary BOOLEAN DEFAULT TRUE
                 );
             """)
             
-            # 3. Add session management columns to harvested_data
-            cursor.execute("""
-                DO $$ 
-                BEGIN 
-                    BEGIN
-                        ALTER TABLE harvested_data 
-                        ADD COLUMN session_id VARCHAR(64),
-                        ADD COLUMN is_temporary BOOLEAN DEFAULT TRUE,
-                        ADD COLUMN last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-                    EXCEPTION
-                        WHEN duplicate_column THEN
-                            NULL;
-                    END;
-                END $$;
-            """)
-            
-            # 4. Add session management columns to harvested_media
-            cursor.execute("""
-                DO $$ 
-                BEGIN 
-                    BEGIN
-                        ALTER TABLE harvested_media 
-                        ADD COLUMN session_id VARCHAR(64),
-                        ADD COLUMN is_temporary BOOLEAN DEFAULT TRUE;
-                    EXCEPTION
-                        WHEN duplicate_column THEN
-                            NULL;
-                    END;
-                END $$;
-            """)
-            
-            # 5. Create indexes for better performance
+            # Create indexes for better performance
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_session_temp ON harvested_data(session_id, is_temporary);
                 CREATE INDEX IF NOT EXISTS idx_media_session_temp ON harvested_media(session_id, is_temporary);

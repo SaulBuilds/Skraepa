@@ -25,6 +25,10 @@ class LLMHandler:
             # Add basic validation checks
             if "error" in response_json:
                 return False
+            # Check for required fields based on the response type
+            if "metadata" in response_json:
+                if not all(k in response_json["metadata"] for k in ["timestamp", "model_version"]):
+                    return False
             return True
         except Exception:
             return False
@@ -37,7 +41,7 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": "Respond with a JSON object containing a 'status' field with value 'ok'"
+                        "content": "You are a testing system. Return this in JSON format with a 'status' field containing 'ok'"
                     },
                     {
                         "role": "user",
@@ -64,7 +68,7 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are a content analysis expert. Analyze the following text and return the analysis in the exact JSON format specified below:
+                        "content": """You are a content analysis expert. Return this analysis in JSON format with the exact structure specified below:
                         {
                             "summary": {
                                 "short": "2-3 sentence summary",
@@ -85,9 +89,7 @@ class LLMHandler:
                                 "technical_level": "basic/intermediate/advanced",
                                 "audience": "general/technical/academic"
                             }
-                        }
-                        
-                        The response must be a valid JSON object matching this exact structure."""
+                        }"""
                     },
                     {"role": "user", "content": text}
                 ],
@@ -110,8 +112,8 @@ class LLMHandler:
             
         except OpenAIError as e:
             return {"error": f"OpenAI API Error: {str(e)}"}
-        except json.JSONDecodeError:
-            return {"error": "Failed to parse OpenAI response"}
+        except json.JSONDecodeError as e:
+            return {"error": f"Failed to parse OpenAI response: {str(e)}"}
         except Exception as e:
             return {"error": f"Unexpected error: {str(e)}"}
 
@@ -126,7 +128,7 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are a content categorization expert. Analyze and return the following in JSON format:
+                        "content": """You are a content categorization expert. Return this analysis in JSON format with the exact structure specified below:
                         {
                             "categories": {
                                 "primary": "string",
@@ -143,9 +145,7 @@ class LLMHandler:
                                 "relevance_score": 0.0 to 1.0,
                                 "key_terms": ["term1", "term2", "term3"]
                             }
-                        }
-                        
-                        The response must be a valid JSON object matching this exact structure."""
+                        }"""
                     },
                     {"role": "user", "content": text}
                 ],
@@ -159,8 +159,8 @@ class LLMHandler:
             
         except OpenAIError as e:
             return {"error": f"OpenAI API Error: {str(e)}"}
-        except json.JSONDecodeError:
-            return {"error": "Failed to parse OpenAI response"}
+        except json.JSONDecodeError as e:
+            return {"error": f"Failed to parse OpenAI response: {str(e)}"}
         except Exception as e:
             return {"error": f"Unexpected error: {str(e)}"}
 

@@ -12,3 +12,10 @@ backgroundColor = "#0E1117"
 secondaryBackgroundColor = "#1E2329"
 textColor = "#FAFAFA"
 font = "sans serif"
+
+[browser]
+gatherUsageStats = true
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = true

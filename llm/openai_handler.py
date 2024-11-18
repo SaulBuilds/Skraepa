@@ -39,7 +39,7 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert. Respond with a JSON object containing the following structure: {'status': 'ok'}"
+                        "content": "You are an expert. Return your response as a JSON object with the following structure: {'status': 'ok'}"
                     },
                     {
                         "role": "user",
@@ -48,8 +48,16 @@ class LLMHandler:
                 ],
                 response_format={"type": "json_object"}
             )
-            result = json.loads(response.choices[0].message.content)
-            return result if self.validate_response(result) else {"error": "Invalid response format"}
+            
+            if not response.choices[0].message.content:
+                return {"error": "Empty response from OpenAI"}
+                
+            try:
+                result = json.loads(response.choices[0].message.content)
+                return result if self.validate_response(result) else {"error": "Invalid response format"}
+            except json.JSONDecodeError as e:
+                return {"error": f"Failed to parse JSON response: {str(e)}"}
+            
         except OpenAIError as e:
             return {"error": f"OpenAI API Error: {str(e)}"}
         except Exception as e:
@@ -66,7 +74,7 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are an expert. Respond with a JSON object containing the following structure:
+                        "content": """You are an expert. Return your response as a JSON object with the following structure:
                         {
                             "content_analysis": {
                                 "summary": {
@@ -96,23 +104,27 @@ class LLMHandler:
                 response_format={"type": "json_object"}
             )
             
-            result = json.loads(response.choices[0].message.content)
-            if not self.validate_response(result):
-                return {"error": "Invalid response format from OpenAI"}
+            if not response.choices[0].message.content:
+                return {"error": "Empty response from OpenAI"}
             
-            result["metadata"] = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "source_url": url,
-                "model_version": self.model,
-                "processing_status": "completed"
-            }
-            
-            return result
+            try:
+                result = json.loads(response.choices[0].message.content)
+                if not self.validate_response(result):
+                    return {"error": "Invalid response format from OpenAI"}
+                
+                result["metadata"] = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "source_url": url,
+                    "model_version": self.model,
+                    "processing_status": "completed"
+                }
+                
+                return result
+            except json.JSONDecodeError as e:
+                return {"error": f"Failed to parse JSON response: {str(e)}"}
             
         except OpenAIError as e:
             return {"error": f"OpenAI API Error: {str(e)}"}
-        except json.JSONDecodeError as e:
-            return {"error": f"Failed to parse OpenAI response: {str(e)}"}
         except Exception as e:
             return {"error": f"Unexpected error: {str(e)}"}
 
@@ -127,7 +139,7 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are an expert. Respond with a JSON object containing the following structure:
+                        "content": """You are an expert. Return your response as a JSON object with the following structure:
                         {
                             "categorization": {
                                 "categories": {
@@ -153,15 +165,19 @@ class LLMHandler:
                 response_format={"type": "json_object"}
             )
             
-            result = json.loads(response.choices[0].message.content)
-            if not self.validate_response(result):
-                return {"error": "Invalid response format from OpenAI"}
-            return result
+            if not response.choices[0].message.content:
+                return {"error": "Empty response from OpenAI"}
+            
+            try:
+                result = json.loads(response.choices[0].message.content)
+                if not self.validate_response(result):
+                    return {"error": "Invalid response format from OpenAI"}
+                return result
+            except json.JSONDecodeError as e:
+                return {"error": f"Failed to parse JSON response: {str(e)}"}
             
         except OpenAIError as e:
             return {"error": f"OpenAI API Error: {str(e)}"}
-        except json.JSONDecodeError as e:
-            return {"error": f"Failed to parse OpenAI response: {str(e)}"}
         except Exception as e:
             return {"error": f"Unexpected error: {str(e)}"}
 

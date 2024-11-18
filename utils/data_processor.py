@@ -120,7 +120,8 @@ class DataProcessor:
     def create_summary_visualization(data: List[tuple]) -> go.Figure:
         """Create summary visualization from database records"""
         # Update column names to match database schema
-        df = pd.DataFrame(data, columns=['id', 'url', 'content', 'raw_content', 'analysis', 'processing_metadata', 'created_at'])
+        columns = ['id', 'url', 'content', 'raw_content', 'analysis', 'processing_metadata', 'created_at']
+        df = pd.DataFrame.from_records(data, columns=columns)
         
         def parse_analysis(x):
             if isinstance(x, str):
@@ -163,7 +164,8 @@ class DataProcessor:
     @staticmethod
     def create_timeline_visualization(data: List[tuple]) -> go.Figure:
         """Create timeline visualization from database records"""
-        df = pd.DataFrame(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
+        columns = ['id', 'url', 'content', 'raw_content', 'analysis', 'processing_metadata', 'created_at']
+        df = pd.DataFrame.from_records(data, columns=columns)
         df['created_at'] = pd.to_datetime(df['created_at'])
         
         daily_counts = df.groupby(df['created_at'].dt.date).size().reset_index()
@@ -189,7 +191,8 @@ class DataProcessor:
     @staticmethod
     def format_data_for_export(data: List[tuple], start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict]:
         """Format data for export with optional date filtering"""
-        df = pd.DataFrame(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
+        columns = ['id', 'url', 'content', 'raw_content', 'analysis', 'processing_metadata', 'created_at']
+        df = pd.DataFrame.from_records(data, columns=columns)
         df['created_at'] = pd.to_datetime(df['created_at'])
         
         # Apply date filters if provided
@@ -211,7 +214,9 @@ class DataProcessor:
                 "id": int(row['id']),
                 "url": str(row['url']),
                 "content": DataProcessor.clean_text(str(row['content'])),
+                "raw_content": str(row['raw_content']),
                 "analysis": DataProcessor.validate_analysis_data(analysis),
+                "processing_metadata": row['processing_metadata'],
                 "metadata": {
                     "created_at": row['created_at'].isoformat(),
                     "processing_status": "completed",

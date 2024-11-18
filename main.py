@@ -17,7 +17,18 @@ st.set_page_config(
 
 # Initialize components
 scraper = WebScraper()
-llm = LLMHandler()
+
+# Test LLM integration
+try:
+    llm = LLMHandler()
+    llm_test = llm.test_connection()
+    if "error" in llm_test:
+        st.error(f"LLM Integration Error: {llm_test['error']}")
+        st.stop()
+except Exception as e:
+    st.error(f"Failed to initialize LLM: {str(e)}")
+    st.stop()
+
 db = Database()
 processor = DataProcessor()
 
@@ -51,7 +62,14 @@ def single_url_mode():
             if result["success"]:
                 # Analyze with LLM
                 analysis = llm.analyze_content(result["content"])
+                if "error" in analysis:
+                    st.error(f"Analysis failed: {analysis['error']}")
+                    return
+                    
                 categorization = llm.categorize_content(result["content"])
+                if "error" in categorization:
+                    st.error(f"Categorization failed: {categorization['error']}")
+                    return
                 
                 # Save to database
                 combined_analysis = {
@@ -96,7 +114,15 @@ def batch_processing_mode():
                 result = scraper.scrape_single_url(url)
                 if result["success"]:
                     analysis = llm.analyze_content(result["content"])
+                    if "error" in analysis:
+                        st.warning(f"Analysis failed for {url}: {analysis['error']}")
+                        continue
+                        
                     categorization = llm.categorize_content(result["content"])
+                    if "error" in categorization:
+                        st.warning(f"Categorization failed for {url}: {categorization['error']}")
+                        continue
+                        
                     combined_analysis = {
                         "content_analysis": analysis,
                         "categorization": categorization

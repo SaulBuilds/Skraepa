@@ -1,0 +1,42 @@
+/* Custom styling for the application */
+.stApp {
+    background-image: linear-gradient(
+        45deg,
+        rgba(14, 17, 23, 0.98),
+        rgba(14, 17, 23, 0.96)
+    ),
+    url('assets/circuit_pattern.svg');
+    background-size: cover;
+}
+
+.card {
+    background: linear-gradient(
+        145deg,
+        rgba(30, 35, 41, 0.95),
+        rgba(30, 35, 41, 0.85)
+    );
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin: 1rem 0;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    backdrop-filter: blur(5px);
+}
+
+.progress-bar {
+    height: 6px;
+    background: linear-gradient(90deg, #7792E3, #4FD1C5);
+    border-radius: 3px;
+}
+
+.visualization {
+    border: 1px solid rgba(119, 146, 227, 0.2);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+/* Animation for data flow */
+@keyframes dataFlow {
+    0% { transform: translateY(0); opacity: 0; }
+    50% { opacity: 1; }
+    100% { transform: translateY(-20px); opacity: 0; }
+}

@@ -4,8 +4,7 @@
         45deg,
         rgba(14, 17, 23, 0.98),
         rgba(14, 17, 23, 0.96)
-    ),
-    url('assets/circuit_pattern.svg');
+    );
     background-size: cover;
 }
 

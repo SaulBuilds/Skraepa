@@ -17,17 +17,37 @@ class LLMHandler:
         except Exception as e:
             raise RuntimeError(f"Failed to initialize OpenAI client: {str(e)}")
 
+    def validate_response(self, response_json: Dict) -> bool:
+        """Validate the structure of LLM response"""
+        try:
+            if not isinstance(response_json, dict):
+                return False
+            # Add basic validation checks
+            if "error" in response_json:
+                return False
+            return True
+        except Exception:
+            return False
+
     def test_connection(self) -> Dict[str, Any]:
         """Test the OpenAI connection with a simple prompt"""
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "user", "content": "Return a simple JSON with key 'status' and value 'ok'"}
+                    {
+                        "role": "system",
+                        "content": "Respond with a JSON object containing a 'status' field with value 'ok'"
+                    },
+                    {
+                        "role": "user",
+                        "content": "Return status"
+                    }
                 ],
                 response_format={"type": "json_object"}
             )
-            return json.loads(response.choices[0].message.content)
+            result = json.loads(response.choices[0].message.content)
+            return result if self.validate_response(result) else {"error": "Invalid response format"}
         except OpenAIError as e:
             return {"error": f"OpenAI API Error: {str(e)}"}
         except Exception as e:
@@ -44,7 +64,7 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": """Analyze the following text and provide a detailed analysis in the following JSON structure:
+                        "content": """You are a content analysis expert. Analyze the following text and return the analysis in the exact JSON format specified below:
                         {
                             "summary": {
                                 "short": "2-3 sentence summary",
@@ -65,7 +85,9 @@ class LLMHandler:
                                 "technical_level": "basic/intermediate/advanced",
                                 "audience": "general/technical/academic"
                             }
-                        }"""
+                        }
+                        
+                        The response must be a valid JSON object matching this exact structure."""
                     },
                     {"role": "user", "content": text}
                 ],
@@ -73,8 +95,8 @@ class LLMHandler:
             )
             
             result = json.loads(response.choices[0].message.content)
-            if not isinstance(result, dict):
-                raise ValueError("Invalid response format from OpenAI")
+            if not self.validate_response(result):
+                return {"error": "Invalid response format from OpenAI"}
             
             # Add metadata
             result["metadata"] = {
@@ -104,7 +126,7 @@ class LLMHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": """Categorize the content with the following structure:
+                        "content": """You are a content categorization expert. Analyze and return the following in JSON format:
                         {
                             "categories": {
                                 "primary": "string",
@@ -121,7 +143,9 @@ class LLMHandler:
                                 "relevance_score": 0.0 to 1.0,
                                 "key_terms": ["term1", "term2", "term3"]
                             }
-                        }"""
+                        }
+                        
+                        The response must be a valid JSON object matching this exact structure."""
                     },
                     {"role": "user", "content": text}
                 ],
@@ -129,8 +153,8 @@ class LLMHandler:
             )
             
             result = json.loads(response.choices[0].message.content)
-            if not isinstance(result, dict):
-                raise ValueError("Invalid response format from OpenAI")
+            if not self.validate_response(result):
+                return {"error": "Invalid response format from OpenAI"}
             return result
             
         except OpenAIError as e:
@@ -148,7 +172,12 @@ class LLMHandler:
         try:
             # Get both analysis and categorization
             analysis = self.analyze_content(text, url)
+            if "error" in analysis:
+                return {"error": f"Analysis failed: {analysis['error']}"}
+                
             categories = self.categorize_content(text)
+            if "error" in categories:
+                return {"error": f"Categorization failed: {categories['error']}"}
             
             # Format data for training
             training_data = {

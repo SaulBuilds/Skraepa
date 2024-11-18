@@ -29,45 +29,113 @@ class DataProcessor:
         return text
 
     @staticmethod
+    def validate_llm_output(data: Dict) -> bool:
+        """Validate LLM output format"""
+        required_fields = {
+            "content_analysis": {
+                "summary": ["short", "key_points"],
+                "sentiment": ["label", "confidence", "analysis"],
+                "topics": ["main_topic", "subtopics", "confidence"],
+                "content_quality": ["readability_score", "technical_level", "audience"]
+            },
+            "categorization": {
+                "categories": ["primary", "secondary", "confidence"],
+                "content_type": ["type", "confidence", "attributes"],
+                "domain_specific": ["field", "relevance_score", "key_terms"]
+            }
+        }
+        
+        try:
+            # Check main sections
+            for section, fields in required_fields.items():
+                if section not in data:
+                    return False
+                
+                # Check nested fields
+                for field, subfields in fields.items():
+                    if field not in data[section]:
+                        return False
+                    
+                    # Check required subfields
+                    for subfield in subfields:
+                        if subfield not in data[section][field]:
+                            return False
+            
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
     def validate_analysis_data(data: Dict) -> Dict:
         """Validate and normalize analysis data"""
         required_fields = {
-            "summary": dict,
-            "sentiment": dict,
-            "topics": dict,
-            "content_quality": dict,
-            "metadata": dict
+            "summary": {
+                "short": str,
+                "key_points": list
+            },
+            "sentiment": {
+                "label": str,
+                "confidence": float,
+                "analysis": str
+            },
+            "topics": {
+                "main_topic": str,
+                "subtopics": list,
+                "confidence": float
+            },
+            "content_quality": {
+                "readability_score": float,
+                "technical_level": str,
+                "audience": str
+            }
         }
         
         validated = {}
-        for field, field_type in required_fields.items():
-            value = data.get(field, {})
-            if not isinstance(value, field_type):
-                value = field_type()
-            validated[field] = value
+        for field, subfields in required_fields.items():
+            field_data = data.get(field, {})
+            validated_field = {}
+            
+            for subfield, expected_type in subfields.items():
+                value = field_data.get(subfield)
+                
+                # Type conversion and validation
+                if expected_type == float:
+                    try:
+                        value = float(value) if value is not None else 0.0
+                        value = max(0.0, min(1.0, value))  # Ensure value is between 0 and 1
+                    except (TypeError, ValueError):
+                        value = 0.0
+                elif expected_type == list:
+                    value = value if isinstance(value, list) else []
+                elif expected_type == str:
+                    value = str(value) if value is not None else ""
+                
+                validated_field[subfield] = value
+            
+            validated[field] = validated_field
         
         return validated
 
     @staticmethod
     def create_summary_visualization(data: List[tuple]) -> go.Figure:
         """Create summary visualization from database records"""
-        # Convert tuple data to DataFrame
-        df = pd.DataFrame.from_records(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
+        df = pd.DataFrame(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
         
-        # Parse the JSON string in analysis column
         def parse_analysis(x):
             if isinstance(x, str):
-                return json.loads(x)
+                try:
+                    return json.loads(x)
+                except json.JSONDecodeError:
+                    return {}
             elif isinstance(x, dict):
                 return x
             return {}
         
         df['analysis'] = df['analysis'].apply(parse_analysis)
         
-        # Extract sentiment from nested structure
         def extract_sentiment(x):
             try:
-                return x.get('sentiment', {}).get('label', 'neutral').lower()
+                return x.get('content_analysis', {}).get('sentiment', {}).get('label', 'neutral').lower()
             except:
                 return 'neutral'
         
@@ -75,7 +143,6 @@ class DataProcessor:
         
         fig = go.Figure()
         
-        # Add sentiment distribution
         fig.add_trace(go.Pie(
             labels=sentiments.index,
             values=sentiments.values,
@@ -95,13 +162,9 @@ class DataProcessor:
     @staticmethod
     def create_timeline_visualization(data: List[tuple]) -> go.Figure:
         """Create timeline visualization from database records"""
-        # Convert tuple data to DataFrame
-        df = pd.DataFrame.from_records(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
-        
-        # Ensure created_at is datetime
+        df = pd.DataFrame(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
         df['created_at'] = pd.to_datetime(df['created_at'])
         
-        # Group by date and count
         daily_counts = df.groupby(df['created_at'].dt.date).size().reset_index()
         daily_counts.columns = ['date', 'count']
         
@@ -125,7 +188,7 @@ class DataProcessor:
     @staticmethod
     def format_data_for_export(data: List[tuple], start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict]:
         """Format data for export with optional date filtering"""
-        df = pd.DataFrame.from_records(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
+        df = pd.DataFrame(data, columns=['id', 'url', 'content', 'analysis', 'created_at'])
         df['created_at'] = pd.to_datetime(df['created_at'])
         
         # Apply date filters if provided
@@ -134,20 +197,19 @@ class DataProcessor:
         if end_date:
             df = df[df['created_at'] <= pd.to_datetime(end_date)]
         
-        # Format data for export
         export_data = []
         for _, row in df.iterrows():
-            analysis = row['analysis']
-            if isinstance(analysis, str):
-                try:
-                    analysis = json.loads(analysis)
-                except:
-                    analysis = {}
+            # Parse analysis JSON
+            try:
+                analysis = json.loads(row['analysis']) if isinstance(row['analysis'], str) else row['analysis']
+            except (json.JSONDecodeError, TypeError):
+                analysis = {}
             
+            # Validate and clean data
             export_record = {
-                "id": row['id'],
-                "url": row['url'],
-                "content": DataProcessor.clean_text(row['content']),
+                "id": int(row['id']),
+                "url": str(row['url']),
+                "content": DataProcessor.clean_text(str(row['content'])),
                 "analysis": DataProcessor.validate_analysis_data(analysis),
                 "metadata": {
                     "created_at": row['created_at'].isoformat(),
@@ -164,36 +226,42 @@ class DataProcessor:
         """Format data specifically for model training"""
         training_data = []
         for record in data:
-            analysis = record.get('analysis', {})
-            if isinstance(analysis, str):
-                try:
+            try:
+                analysis = record.get('analysis', {})
+                if isinstance(analysis, str):
                     analysis = json.loads(analysis)
-                except:
-                    analysis = {}
-            
-            # Extract features and labels
-            training_record = {
-                "features": {
-                    "text": DataProcessor.clean_text(record.get('content', '')),
-                    "url": record.get('url', ''),
-                    "length": len(record.get('content', '')),
-                    "has_technical_terms": bool(re.search(r'\b(api|function|class|method|algorithm)\b', 
-                                                        record.get('content', '').lower())),
-                },
-                "labels": {
-                    "sentiment": analysis.get('sentiment', {}).get('label', 'neutral'),
-                    "category": analysis.get('categories', {}).get('primary', 'unknown'),
-                    "content_type": analysis.get('content_type', {}).get('type', 'unknown')
-                },
-                "metadata": {
-                    "confidence_scores": {
-                        "sentiment": analysis.get('sentiment', {}).get('confidence', 0.0),
-                        "category": analysis.get('categories', {}).get('confidence', 0.0)
+                
+                # Extract and validate features
+                content = record.get('content', '')
+                cleaned_content = DataProcessor.clean_text(content)
+                
+                training_record = {
+                    "features": {
+                        "text": cleaned_content,
+                        "url": record.get('url', ''),
+                        "length": len(cleaned_content),
+                        "has_technical_terms": bool(re.search(
+                            r'\b(api|function|class|method|algorithm)\b',
+                            cleaned_content.lower()
+                        )),
                     },
-                    "timestamp": record.get('metadata', {}).get('created_at', datetime.utcnow().isoformat())
+                    "labels": {
+                        "sentiment": analysis.get('content_analysis', {}).get('sentiment', {}).get('label', 'neutral'),
+                        "category": analysis.get('categorization', {}).get('categories', {}).get('primary', 'unknown'),
+                        "content_type": analysis.get('categorization', {}).get('content_type', {}).get('type', 'unknown')
+                    },
+                    "metadata": {
+                        "confidence_scores": {
+                            "sentiment": float(analysis.get('content_analysis', {}).get('sentiment', {}).get('confidence', 0.0)),
+                            "category": float(analysis.get('categorization', {}).get('categories', {}).get('confidence', 0.0))
+                        },
+                        "timestamp": record.get('metadata', {}).get('created_at', datetime.utcnow().isoformat())
+                    }
                 }
-            }
-            training_data.append(training_record)
+                training_data.append(training_record)
+            except Exception as e:
+                print(f"Error processing record: {str(e)}")
+                continue
         
         return training_data
     
